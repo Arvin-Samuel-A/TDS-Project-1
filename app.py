@@ -276,12 +276,24 @@ async def execute_task_a1(user_email: str) -> Dict:
         
         # Run the script with email as argument
         result = subprocess.run(
-            [sys.executable, "datagen.py", user_email],
+            ["uv", "run", "datagen.py", user_email],
             capture_output=True,
             text=True,
-            check=True
         )
-        
+        if result.returncode != 0:
+            if "No module named" in result.stderr:
+                missing_module = result.stderr.split("No module named")[-1].strip().replace("'", "")
+                subprocess.run(["uv", "pip", "install", missing_module], check=True)
+                result = subprocess.run(
+                    ["uv", "run", "datagen.py", user_email],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                if result.returncode != 0:
+                    return {"success": False, "message": f"datagen.py failed after installing {missing_module}: {result.stderr}"}
+                return {"success": True, "message": f"Successfully ran datagen.py after installing {missing_module}", "output": result.stdout}
+            return {"success": False, "message": f"datagen.py failed with: {result.stderr}"}
         return {"success": True, "message": "Successfully ran datagen.py", "output": result.stdout}
     
     except Exception as e:

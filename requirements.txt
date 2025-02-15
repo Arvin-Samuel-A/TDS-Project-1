@@ -1,0 +1,6 @@
+FastAPI
+uvicorn
+requests
+duckdb
+pillow
+numpy
