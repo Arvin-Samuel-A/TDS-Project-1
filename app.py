@@ -29,9 +29,9 @@ def is_safe_path(path: str) -> bool:
 
 def get_embedding(text: str) -> List[float]:
     """Get embedding for a text using OpenAI's API via HTTP request."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("AIPROXY_TOKEN")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
+        raise ValueError("AIPROXY_TOKEN environment variable not set")
     
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -63,9 +63,9 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 
 def call_llm(prompt: str) -> str:
     """Call GPT-4o-mini with a prompt via HTTP request."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("AIPROXY_TOKEN")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
+        raise ValueError("AIPROXY_TOKEN environment variable not set")
     
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -105,9 +105,9 @@ def extract_email_from_text(text: str) -> str:
 
 def extract_credit_card_from_image(image_path: str) -> str:
     """Use LLM to extract credit card number from image via HTTP request."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("AIPROXY_TOKEN")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
+        raise ValueError("AIPROXY_TOKEN environment variable not set")
     
     # Read and encode image
     with open(image_path, "rb") as image_file:
@@ -130,7 +130,7 @@ def extract_credit_card_from_image(image_path: str) -> str:
                 "content": [
                     {
                         "type": "text", 
-                        "text": "This image contains a credit card. Extract the 16-digit card number. Return ONLY the digits with no spaces or separators."
+                        "text": "Extract the 16-digit number from the given image. Return ONLY the digits with no spaces or separators."
                     },
                     {
                         "type": "image_url",
@@ -161,26 +161,27 @@ def extract_credit_card_from_image(image_path: str) -> str:
     return card_number
 
 def find_most_similar_comments(comments_path: str) -> Tuple[str, str]:
-    """Find the most similar pair of comments using embeddings."""
+    """Find the most similar pair of comments by sending all comments to gpt-4o-mini."""
     with open(comments_path, 'r') as f:
         comments = [line.strip() for line in f if line.strip()]
     
-    # Get embeddings for all comments
-    embeddings = [get_embedding(comment) for comment in comments]
+    # Prepare a prompt with all comments listed
+    prompt = "Below is a list of comments:\n"
+    for comment in comments:
+        prompt += f"- {comment}\n"
+    prompt += (
+        "\nIdentify the two comments that are most similar in meaning. "
+        "Return ONLY the two comments, each on a separate line, with no explanation."
+    )
     
-    # Find most similar pair
-    max_similarity = -1
-    most_similar_pair = (0, 0)
+    response = call_llm(prompt)
+    comment_pair = [line.strip() for line in response.strip().splitlines() if line.strip()]
     
-    for i in range(len(comments)):
-        for j in range(i+1, len(comments)):
-            similarity = cosine_similarity(embeddings[i], embeddings[j])
-            if similarity > max_similarity:
-                max_similarity = similarity
-                most_similar_pair = (i, j)
+    if len(comment_pair) >= 2:
+        return comment_pair[0], comment_pair[1]
+    else:
+        raise Exception("Unable to identify a similar comment pair using gpt-4o-mini.")
     
-    return comments[most_similar_pair[0]], comments[most_similar_pair[1]]
-
 def parse_task_with_llm(task_description: str) -> Dict:
     """Parse task description using LLM to identify task type and details."""
     prompt = f"""
@@ -190,7 +191,7 @@ def parse_task_with_llm(task_description: str) -> Dict:
         "task_number": "A1", // The task number (A1-A10, B3-B10, or "custom" for others)
         "input_file": "path/to/input", // The input file path mentioned in the task
         "output_file": "path/to/output", // The output file path mentioned in the task
-        "additional_params": {{}} // Any other relevant parameters for the specific task
+        "additional_params": {{}} // Any other relevant parameters for the specific task. If Day return a number for the day like monday = 0, tuesday = 1, wednesday = 2, thursday = 3, friday = 4, saturday = 5 and sunday = 6
     }}
     
     IMPORTANT SECURITY RULES:
@@ -201,14 +202,14 @@ def parse_task_with_llm(task_description: str) -> Dict:
     The possible tasks are:
     A1. Install uv (if required) and run datagen.py with email as argument
     A2. Format the contents of a markdown file using prettier
-    A3. Count days of week in a dates file
+    A3. Count days of week in a dates file and write to output file
     A4. Sort contacts by last_name, first_name
     A5. Write first line of 10 most recent log files
-    A6. Create index of markdown H1 headers
+    A6. Find all Markdown files, extract the first occurrance of each H1 and Create an index file that maps each filename (without the /data/docs/ prefix) to its title
     A7. Extract sender's email address from email
     A8. Extract credit card number from image
     A9. Find most similar comments using embeddings
-    A10. Query SQLite database for total sales
+    A10. Query SQLite database for total sales of tickets
 
     B3. Fetch data from an API and save it
     B4. Clone a git repo and make a commit
@@ -251,7 +252,7 @@ def parse_task_with_llm(task_description: str) -> Dict:
             "additional_params": {}
         }
 
-async def execute_task_a1(user_email: str) -> Dict:
+def execute_task_a1(user_email: str) -> Dict:
     """Install uv if required and run datagen.py with email as argument."""
     # Check if uv is installed
     try:
@@ -301,15 +302,11 @@ async def execute_task_a1(user_email: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error running datagen.py: {str(e)}"}
 
-async def execute_task_a2(input_file: str) -> Dict:
+def execute_task_a2(input_file: str) -> Dict:
     """Format markdown file using prettier."""
     try:
-        # Check if prettier is installed
-        try:
-            subprocess.run(["npx", "prettier", "--version"], capture_output=True, check=True)
-        except:
-            # Install prettier
-            subprocess.run(["npm", "install", "--no-save", "prettier@3.4.2"], check=True)
+
+        subprocess.run(["npm", "install", "--no-save", "prettier@3.4.2"], check=True)
         
         # Format the file in-place
         result = subprocess.run(
@@ -324,21 +321,13 @@ async def execute_task_a2(input_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error formatting file: {str(e)}"}
 
-async def execute_task_a3(input_file: str, output_file: str, day_of_week: str = "Wednesday") -> Dict:
+def execute_task_a3(input_file: str, output_file: str, day_of_week: int = 2) -> Dict:
     """Count occurrences of a specific day in a list of dates."""
     try:
         with open(input_file, 'r') as f:
             dates = [line.strip() for line in f if line.strip()]
-        
-        # Map day names to their number in the week (0 = Monday, 6 = Sunday)
-        day_map = {
-            "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
-            "Friday": 4, "Saturday": 5, "Sunday": 6,
-            "सोमवार": 0, "मंगलवार": 1, "बुधवार": 2, "गुरुवार": 3, "शुक्रवार": 4, "शनिवार": 5, "रविवार": 6,
-            "திங்கள்": 0, "செவ்வாய்": 1, "புதன்": 2, "வியாழன்": 3, "வெள்ளி": 4, "சனி": 5, "ஞாயிறு": 6
-        }
-        
-        day_number = day_map.get(day_of_week, 2)  # Default to Wednesday if not found
+    
+        day_number = day_of_week
         
         count = 0
         for date_str in dates:
@@ -371,32 +360,23 @@ async def execute_task_a3(input_file: str, output_file: str, day_of_week: str = 
     except Exception as e:
         return {"success": False, "message": f"Error counting dates: {str(e)}"}
 
-async def execute_task_a4(input_file: str, output_file: str) -> Dict:
+def execute_task_a4(input_file: str, output_file: str) -> Dict:
     """Sort contacts by last_name, then first_name."""
     try:
         with open(input_file, 'r') as f:
             data = json.load(f)
         
-        if not isinstance(data, dict) or "contacts" not in data:
-            return {"success": False, "message": "Invalid contacts JSON format"}
-        
         # Sort contacts
-        sorted_contacts = sorted(
-            data["contacts"],
-            key=lambda x: (x.get("last_name", ""), x.get("first_name", ""))
-        )
-        
-        # Update and write result
-        data["contacts"] = sorted_contacts
+        data = sorted(data, key=lambda c: (c['last_name'].lower(), c['first_name'].lower()))
         with open(output_file, 'w') as f:
             json.dump(data, f, indent=2)
         
-        return {"success": True, "message": f"Sorted {len(sorted_contacts)} contacts"}
+        return {"success": True, "message": f"Sorted {len(data)} contacts"}
     
     except Exception as e:
         return {"success": False, "message": f"Error sorting contacts: {str(e)}"}
 
-async def execute_task_a5(logs_dir: str, output_file: str) -> Dict:
+def execute_task_a5(logs_dir: str, output_file: str) -> Dict:
     """Write first line of 10 most recent log files."""
     try:
         # Get all log files with their modification times
@@ -428,7 +408,7 @@ async def execute_task_a5(logs_dir: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error processing log files: {str(e)}"}
 
-async def execute_task_a6(docs_dir: str, output_file: str) -> Dict:
+def execute_task_a6(docs_dir: str, output_file: str) -> Dict:
     """Create index of markdown H1 headers."""
     try:
         index = {}
@@ -454,7 +434,7 @@ async def execute_task_a6(docs_dir: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error creating markdown index: {str(e)}"}
 
-async def execute_task_a7(input_file: str, output_file: str) -> Dict:
+def execute_task_a7(input_file: str, output_file: str) -> Dict:
     """Extract sender's email address from email text."""
     try:
         with open(input_file, 'r') as f:
@@ -472,7 +452,7 @@ async def execute_task_a7(input_file: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error extracting email: {str(e)}"}
 
-async def execute_task_a8(input_file: str, output_file: str) -> Dict:
+def execute_task_a8(input_file: str, output_file: str) -> Dict:
     """Extract credit card number from image."""
     try:
         # Extract card number using LLM vision
@@ -487,7 +467,7 @@ async def execute_task_a8(input_file: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error extracting credit card: {str(e)}"}
 
-async def execute_task_a9(input_file: str, output_file: str) -> Dict:
+def execute_task_a9(input_file: str, output_file: str) -> Dict:
     """Find most similar comments using embeddings."""
     try:
         comment1, comment2 = find_most_similar_comments(input_file)
@@ -501,7 +481,7 @@ async def execute_task_a9(input_file: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error finding similar comments: {str(e)}"}
 
-async def execute_task_a10(db_file: str, output_file: str, ticket_type: str = "Gold") -> Dict:
+def execute_task_a10(db_file: str, output_file: str, ticket_type: str = "Gold") -> Dict:
     """Query SQLite database for total sales of specific ticket type."""
     try:
         # Connect to database
@@ -528,7 +508,7 @@ async def execute_task_a10(db_file: str, output_file: str, ticket_type: str = "G
     except Exception as e:
         return {"success": False, "message": f"Error querying ticket sales: {str(e)}"}
 
-async def execute_task_b3(api_url: str, output_file: str) -> Dict:
+def execute_task_b3(api_url: str, output_file: str) -> Dict:
     """Fetch data from an API and save it."""
     try:
         # Ensure output file is within /data
@@ -551,7 +531,7 @@ async def execute_task_b3(api_url: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error fetching API data: {str(e)}"}
 
-async def execute_task_b4(repo_url: str, output_dir: str, commit_message: str) -> Dict:
+def execute_task_b4(repo_url: str, output_dir: str, commit_message: str) -> Dict:
     """Clone a git repo and make a commit."""
     try:
         # Ensure output directory is within /data
@@ -583,7 +563,7 @@ async def execute_task_b4(repo_url: str, output_dir: str, commit_message: str) -
     except Exception as e:
         return {"success": False, "message": f"Error with git operations: {str(e)}"}
 
-async def execute_task_b5(db_file: str, query: str, output_file: str) -> Dict:
+def execute_task_b5(db_file: str, query: str, output_file: str) -> Dict:
     """Run a SQL query on a SQLite or DuckDB database."""
     try:
         # Ensure input and output files are within /data
@@ -628,7 +608,7 @@ async def execute_task_b5(db_file: str, query: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error executing database query: {str(e)}"}
 
-async def execute_task_b6(url: str, output_file: str) -> Dict:
+def execute_task_b6(url: str, output_file: str) -> Dict:
     """Extract data from a website (web scraping)."""
     try:
         # Ensure output file is within /data
@@ -651,7 +631,7 @@ async def execute_task_b6(url: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error scraping website: {str(e)}"}
 
-async def execute_task_b7(input_file: str, output_file: str, width: int = 800, height: int = None) -> Dict:
+def execute_task_b7(input_file: str, output_file: str, width: int = 800, height: int = None) -> Dict:
     """Compress or resize an image."""
     try:
         # Ensure input and output files are within /data
@@ -680,16 +660,16 @@ async def execute_task_b7(input_file: str, output_file: str, width: int = 800, h
     except Exception as e:
         return {"success": False, "message": f"Error resizing image: {str(e)}"}
 
-async def execute_task_b8(input_file: str, output_file: str) -> Dict:
+def execute_task_b8(input_file: str, output_file: str) -> Dict:
     """Transcribe audio from an MP3 file using HTTP request."""
     try:
         # Ensure input and output files are within /data
         if not is_safe_path(input_file) or not is_safe_path(output_file):
             return {"success": False, "message": "Security violation: files must be within /data directory"}
         
-        api_key = os.environ.get("OPENAI_API_KEY")
+        api_key = os.environ.get("AIPROXY_TOKEN")
         if not api_key:
-            return {"success": False, "message": "OPENAI_API_KEY environment variable not set"}
+            return {"success": False, "message": "AIPROXY_TOKEN environment variable not set"}
         
         # Prepare the HTTP request
         url = "https://aiproxy.sanand.workers.dev/openai/v1/audio/transcriptions"
@@ -723,7 +703,7 @@ async def execute_task_b8(input_file: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error transcribing audio: {str(e)}"}
 
-async def execute_task_b9(input_file: str, output_file: str) -> Dict:
+def execute_task_b9(input_file: str, output_file: str) -> Dict:
     """Convert Markdown to HTML."""
     try:
         # Ensure input and output files are within /data
@@ -757,7 +737,7 @@ async def execute_task_b9(input_file: str, output_file: str) -> Dict:
     except Exception as e:
         return {"success": False, "message": f"Error converting Markdown to HTML: {str(e)}"}
 
-async def execute_task_b10(input_file: str, filter_column: str = None, filter_value: str = None) -> Dict:
+def execute_task_b10(input_file: str, filter_column: str = None, filter_value: str = None) -> Dict:
     """Filter a CSV file and return JSON data."""
     try:
         # Ensure input file is within /data
@@ -788,7 +768,7 @@ async def execute_task_b10(input_file: str, filter_column: str = None, filter_va
         return {"success": False, "message": f"Error filtering CSV data: {str(e)}"}
 
 @app.post("/run")
-async def run_task(task: str):
+def run_task(task: str):
     try:
         # Parse the task using LLM
         parsed_task = parse_task_with_llm(task)
@@ -809,92 +789,93 @@ async def run_task(task: str):
         # Execute the appropriate task
         if task_number == "A1":
             email = parsed_task.get("additional_params", {}).get("email", "${user.email}")
-            result = await execute_task_a1(email)
+            result = execute_task_a1(email)
             
         elif task_number == "A2":
-            input_file = parsed_task.get("input_file", "/data/format.md")
-            result = await execute_task_a2(input_file)
+            input_file = "." + parsed_task.get("input_file", "/data/format.md")
+            result = execute_task_a2(input_file)
             
         elif task_number == "A3":
-            input_file = parsed_task.get("input_file", "/data/dates.txt")
-            output_file = parsed_task.get("output_file", "/data/dates-wednesdays.txt")
-            day = parsed_task.get("additional_params", {}).get("day_of_week", "Wednesday")
-            result = await execute_task_a3(input_file, output_file, day)
+            input_file = "." + parsed_task.get("input_file", "/data/dates.txt")
+            output_file = "." + parsed_task.get("output_file", "/data/dates-wednesdays.txt")
+            day = parsed_task.get("additional_params", {}).get("day", 2)
+            print(day)
+            result = execute_task_a3(input_file, output_file, day)
             
         elif task_number == "A4":
-            input_file = parsed_task.get("input_file", "/data/contacts.json")
-            output_file = parsed_task.get("output_file", "/data/contacts-sorted.json")
-            result = await execute_task_a4(input_file, output_file)
+            input_file = "." + parsed_task.get("input_file", "/data/contacts.json")
+            output_file = "." + parsed_task.get("output_file", "/data/contacts-sorted.json")
+            result = execute_task_a4(input_file, output_file)
             
         elif task_number == "A5":
-            logs_dir = parsed_task.get("input_file", "/data/logs/")
-            output_file = parsed_task.get("output_file", "/data/logs-recent.txt")
-            result = await execute_task_a5(logs_dir, output_file)
+            logs_dir = "." + parsed_task.get("input_file", "/data/logs/")
+            output_file = "." + parsed_task.get("output_file", "/data/logs-recent.txt")
+            result = execute_task_a5(logs_dir, output_file)
             
         elif task_number == "A6":
-            docs_dir = parsed_task.get("input_file", "/data/docs/")
-            output_file = parsed_task.get("output_file", "/data/docs/index.json")
-            result = await execute_task_a6(docs_dir, output_file)
+            docs_dir = "." + parsed_task.get("input_file", "/data/docs/")
+            output_file = "." + parsed_task.get("output_file", "/data/docs/index.json")
+            result = execute_task_a6(docs_dir, output_file)
             
         elif task_number == "A7":
-            input_file = parsed_task.get("input_file", "/data/email.txt")
-            output_file = parsed_task.get("output_file", "/data/email-sender.txt")
-            result = await execute_task_a7(input_file, output_file)
+            input_file = "." + parsed_task.get("input_file", "/data/email.txt")
+            output_file = "." + parsed_task.get("output_file", "/data/email-sender.txt")
+            result = execute_task_a7(input_file, output_file)
             
         elif task_number == "A8":
-            input_file = parsed_task.get("input_file", "/data/credit-card.png")
-            output_file = parsed_task.get("output_file", "/data/credit-card.txt")
-            result = await execute_task_a8(input_file, output_file)
+            input_file = "." + parsed_task.get("input_file", "/data/credit-card.png")
+            output_file = "." + parsed_task.get("output_file", "/data/credit-card.txt")
+            result = execute_task_a8(input_file, output_file)
             
         elif task_number == "A9":
-            input_file = parsed_task.get("input_file", "/data/comments.txt")
-            output_file = parsed_task.get("output_file", "/data/comments-similar.txt")
-            result = await execute_task_a9(input_file, output_file)
+            input_file = "." + parsed_task.get("input_file", "/data/comments.txt")
+            output_file = "." + parsed_task.get("output_file", "/data/comments-similar.txt")
+            result = execute_task_a9(input_file, output_file)
             
         elif task_number == "A10":
-            db_file = parsed_task.get("input_file", "/data/ticket-sales.db")
-            output_file = parsed_task.get("output_file", "/data/ticket-sales-gold.txt")
+            db_file = "." + parsed_task.get("input_file", "/data/ticket-sales.db")
+            output_file = "." + parsed_task.get("output_file", "/data/ticket-sales-gold.txt")
             ticket_type = parsed_task.get("additional_params", {}).get("ticket_type", "Gold")
-            result = await execute_task_a10(db_file, output_file, ticket_type)
+            result = execute_task_a10(db_file, output_file, ticket_type)
         
         # Include parsed task info in result
         elif task_number == "B3":
             api_url = parsed_task.get("additional_params", {}).get("api_url", "")
-            output_file = parsed_task.get("output_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             if not api_url or not output_file:
                 result = {"success": False, "message": "Missing required parameters: api_url and output_file"}
             else:
-                result = await execute_task_b3(api_url, output_file)
+                result = execute_task_b3(api_url, output_file)
                 
         elif task_number == "B4":
             repo_url = parsed_task.get("additional_params", {}).get("repo_url", "")
-            output_dir = parsed_task.get("output_file", "")
+            output_dir = "." + parsed_task.get("output_file", "")
             commit_message = parsed_task.get("additional_params", {}).get("commit_message", "Automated commit")
             if not repo_url or not output_dir:
                 result = {"success": False, "message": "Missing required parameters: repo_url and output_dir"}
             else:
-                result = await execute_task_b4(repo_url, output_dir, commit_message)
+                result = execute_task_b4(repo_url, output_dir, commit_message)
                 
         elif task_number == "B5":
-            db_file = parsed_task.get("input_file", "")
+            db_file = "." + parsed_task.get("input_file", "")
             query = parsed_task.get("additional_params", {}).get("query", "")
-            output_file = parsed_task.get("output_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             if not db_file or not query or not output_file:
                 result = {"success": False, "message": "Missing required parameters: db_file, query, and output_file"}
             else:
-                result = await execute_task_b5(db_file, query, output_file)
+                result = execute_task_b5(db_file, query, output_file)
                 
         elif task_number == "B6":
             url = parsed_task.get("additional_params", {}).get("url", "")
-            output_file = parsed_task.get("output_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             if not url or not output_file:
                 result = {"success": False, "message": "Missing required parameters: url and output_file"}
             else:
-                result = await execute_task_b6(url, output_file)
+                result = execute_task_b6(url, output_file)
                 
         elif task_number == "B7":
-            input_file = parsed_task.get("input_file", "")
-            output_file = parsed_task.get("output_file", "")
+            input_file = "." + parsed_task.get("input_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             width = int(parsed_task.get("additional_params", {}).get("width", 800))
             height = parsed_task.get("additional_params", {}).get("height")
             if height is not None:
@@ -902,32 +883,32 @@ async def run_task(task: str):
             if not input_file or not output_file:
                 result = {"success": False, "message": "Missing required parameters: input_file and output_file"}
             else:
-                result = await execute_task_b7(input_file, output_file, width, height)
+                result = execute_task_b7(input_file, output_file, width, height)
                 
         elif task_number == "B8":
-            input_file = parsed_task.get("input_file", "")
-            output_file = parsed_task.get("output_file", "")
+            input_file = "." + parsed_task.get("input_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             if not input_file or not output_file:
                 result = {"success": False, "message": "Missing required parameters: input_file and output_file"}
             else:
-                result = await execute_task_b8(input_file, output_file)
+                result = execute_task_b8(input_file, output_file)
                 
         elif task_number == "B9":
-            input_file = parsed_task.get("input_file", "")
-            output_file = parsed_task.get("output_file", "")
+            input_file = "." + parsed_task.get("input_file", "")
+            output_file = "." + parsed_task.get("output_file", "")
             if not input_file or not output_file:
                 result = {"success": False, "message": "Missing required parameters: input_file and output_file"}
             else:
-                result = await execute_task_b9(input_file, output_file)
+                result = execute_task_b9(input_file, output_file)
                 
         elif task_number == "B10":
-            input_file = parsed_task.get("input_file", "")
+            input_file = "." + parsed_task.get("input_file", "")
             filter_column = parsed_task.get("additional_params", {}).get("filter_column")
             filter_value = parsed_task.get("additional_params", {}).get("filter_value")
             if not input_file:
                 result = {"success": False, "message": "Missing required parameter: input_file"}
             else:
-                result = await execute_task_b10(input_file, filter_column, filter_value)
+                result = execute_task_b10(input_file, filter_column, filter_value)
         
         # Include parsed task info in result
         result["parsed_task"] = parsed_task
@@ -944,7 +925,7 @@ async def run_task(task: str):
         )
 
 @app.get("/read", response_class=PlainTextResponse)
-async def read_file(path: str):
+def read_file(path: str):
     """Read and return the contents of a file."""
     # Security check: Ensure path is within /data directory
     if not is_safe_path(path):
