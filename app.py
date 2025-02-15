@@ -276,7 +276,8 @@ async def execute_task_a1(user_email: str) -> Dict:
         
         # Run the script with email as argument
         result = subprocess.run(
-            ["uv", "run", "datagen.py", user_email],
+            ["uv", "run", "datagen.py", user_email, "--root", "./data"],
+            cwd=os.getcwd(),
             capture_output=True,
             text=True,
         )
@@ -285,8 +286,9 @@ async def execute_task_a1(user_email: str) -> Dict:
                 missing_module = result.stderr.split("No module named")[-1].strip().replace("'", "")
                 subprocess.run(["uv", "pip", "install", missing_module], check=True)
                 result = subprocess.run(
-                    ["uv", "run", "datagen.py", user_email],
+                    ["uv", "run", "datagen.py", user_email, "--root", "./data"],
                     capture_output=True,
+                    cwd=os.getcwd(),
                     text=True,
                     check=True
                 )
