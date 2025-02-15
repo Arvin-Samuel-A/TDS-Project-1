@@ -1,4 +1,9 @@
-FROM python:3.13-slim
+FROM python:3.13
+
+# Install Node.js and npm
+RUN apt-get update && \
+    apt-get install -y nodejs npm && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
 WORKDIR /app
